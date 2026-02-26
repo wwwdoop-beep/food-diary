@@ -7,7 +7,6 @@ const ACTIVITY_LEVELS = {
   sport: { label: '🎾 Спорт',        cal: 2500, prot: 155, fat: 80, carb: 290, fiber: 30, sfat: 20 },
 };
 function getNorms(activity) { return ACTIVITY_LEVELS[activity] || ACTIVITY_LEVELS.rest; }
-const MOODS = ['😄','😊','😐','😔','😴','💪','🤒'];
 const WATER_GOAL = 8;
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 function addDays(s, d) { const dt = new Date(s + 'T12:00:00'); dt.setDate(dt.getDate() + d); return dt.toISOString().split('T')[0]; }
@@ -32,7 +31,7 @@ export default function App() {
   const [dark, setDark] = useState(() => localStorage.getItem('diary_dark') === '1');
   const [tab, setTab] = useState('diary');
   const [date, setDate] = useState(todayStr());
-  const [dayData, setDayData] = useState({ meals: [], water: 0, mood: null, mood_note: '', ai_rec: null, activity: 'rest' });
+  const [dayData, setDayData] = useState({ meals: [], water: 0, ai_rec: null, activity: 'rest' });
   const [allData, setAllData] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,7 +51,7 @@ export default function App() {
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
     const data = await getDayData(d);
-    setDayData({ meals: data.meals || [], water: data.water || 0, mood: data.mood || null, mood_note: data.mood_note || '', ai_rec: data.ai_rec || null, activity: data.activity || 'rest' });
+    setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest' });
     setSyncing(false);
   }, []);
 
@@ -72,7 +71,7 @@ export default function App() {
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
-    await saveDayData(date, { meals: updated.meals, water: updated.water, mood: updated.mood, mood_note: updated.mood_note, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' });
+    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' });
   }
 
   const totals = (dayData.meals || []).reduce((a, m) => { for (const k in a) a[k] += parseFloat(m[k]) || 0; return a; }, { cal:0, prot:0, fat:0, carb:0, fiber:0, sfat:0 });
@@ -134,25 +133,23 @@ export default function App() {
     try {
       const t = meals.reduce((a,m)=>{for(const k in a)a[k]+=parseFloat(m[k])||0;return a;},{cal:0,prot:0,fat:0,carb:0,fiber:0,sfat:0});
       const NORMS = getNorms(dayData.activity); const rem = { cal: Math.round(NORMS.cal-t.cal), prot: Math.round(NORMS.prot-t.prot), carb: Math.round(NORMS.carb-t.carb), fiber: Math.round(NORMS.fiber-t.fiber) };
-      const prompt = 'Пользователь ведёт дневник питания. Цели: снизить холестерин, похудеть.
-' +
-        'Съедено за день: ' + meals.map(m=>m.name).join(', ') + '
-' +
-        'Итого: ' + Math.round(t.cal) + ' ккал, белки ' + Math.round(t.prot) + 'г, жиры ' + Math.round(t.fat) + 'г, углеводы ' + Math.round(t.carb) + 'г, клетчатка ' + Math.round(t.fiber) + 'г, нас.жиры ' + Math.round(t.sfat) + 'г.
-' +
-        'До нормы осталось: ' + (rem.cal>0?rem.cal+' ккал':'калории закрыты') + ', белки ' + (rem.prot>0?rem.prot+'г':'норма') + ', углеводы ' + (rem.carb>0?rem.carb+'г':'норма') + ', клетчатка ' + (rem.fiber>0?rem.fiber+'г':'норма') + '.
-
-' +
-        'В поле add предлагай конкретные блюда с граммами и ккал, например: греческий йогурт 150г (~100 ккал, 15г белка). Выбирай продукты полезные при холестерине.
-' +
-        'В поле avoid пиши конкретно что стоит избежать исходя из уже съеденного сегодня.
-' +
-        'В поле tip — главный вывод по дню в 1 предложении.
-
-' +
-        'ТОЛЬКО JSON без markdown:
-{"avoid":["макс 3 конкретных пункта"],"add":["макс 3 конкретных блюда с граммами и ккал"],"tip":"вывод до 90 символов"}';
-      let text = await callClaude([{ role: 'user', content: prompt }], 800);
+      const mealNames = meals.map(m=>m.name).join(', ');
+      const totalsStr = Math.round(t.cal) + ' ккал, белки ' + Math.round(t.prot) + 'г, жиры ' + Math.round(t.fat) + 'г, углеводы ' + Math.round(t.carb) + 'г, клетчатка ' + Math.round(t.fiber) + 'г, нас.жиры ' + Math.round(t.sfat) + 'г';
+      const remStr = (rem.cal>0?rem.cal+' ккал':'калории закрыты') + ', белки ' + (rem.prot>0?rem.prot+'г':'норма') + ', углеводы ' + (rem.carb>0?rem.carb+'г':'норма') + ', клетчатка ' + (rem.fiber>0?rem.fiber+'г':'норма');
+      const aiPrompt = [
+        'Пользователь ведет дневник питания. Цели: снизить холестерин, похудеть.',
+        'Съедено за день: ' + mealNames,
+        'Итого: ' + totalsStr + '.',
+        'До нормы осталось: ' + remStr + '.',
+        '',
+        'В поле add предлагай конкретные блюда с граммами и ккал, например: греческий йогурт 150г (~100 ккал, 15г белка). Выбирай продукты полезные при холестерине.',
+        'В поле avoid пиши конкретно что стоит избежать исходя из уже съеденного сегодня.',
+        'В поле tip - главный вывод по дню в 1 предложении.',
+        '',
+        'ТОЛЬКО JSON без markdown:',
+        '{"avoid":["макс 3 конкретных пункта"],"add":["макс 3 конкретных блюда с граммами и ккал"],"tip":"вывод до 90 символов"}'
+      ].join('\n');
+      let text = await callClaude([{ role: 'user', content: aiPrompt }], 800);
       text = text.replace(/```json|```/g,'').trim();
       const match = text.match(/\{[\s\S]*\}/); if (match) text = match[0];
       const rec = JSON.parse(text);
@@ -161,8 +158,6 @@ export default function App() {
       await saveDayData(date, {
         meals: current.meals || meals,
         water: current.water || 0,
-        mood: current.mood || null,
-        mood_note: current.mood_note || '',
         ai_rec: rec,
         activity: current.activity || 'rest'
       });
