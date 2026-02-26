@@ -120,7 +120,16 @@ export default function App() {
       text = text.replace(/```json|```/g,'').trim();
       const match = text.match(/\{[\s\S]*\}/); if (match) text = match[0];
       const rec = JSON.parse(text);
-      await updateDay({ ai_rec: rec });
+      // Сохраняем только ai_rec, не трогая остальные поля
+      const current = await getDayData(date);
+      await saveDayData(date, {
+        meals: current.meals || meals,
+        water: current.water || 0,
+        mood: current.mood || null,
+        mood_note: current.mood_note || '',
+        ai_rec: rec
+      });
+      setDayData(prev => ({ ...prev, ai_rec: rec }));
     } catch(e) { console.error(e); }
     setAiLoading(false);
   }
