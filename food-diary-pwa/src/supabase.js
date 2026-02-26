@@ -45,3 +45,51 @@ export async function getAllData() {
     .limit(30);
   return data || [];
 }
+
+// Blood tests
+export async function getBloodTests() {
+  const uid = getUserId();
+  const { data } = await supabase
+    .from('blood_tests')
+    .select('*')
+    .eq('user_id', uid)
+    .order('date', { ascending: true });
+  return data || [];
+}
+
+export async function saveBloodTest(record) {
+  const uid = getUserId();
+  const { error } = await supabase
+    .from('blood_tests')
+    .insert({ user_id: uid, ...record });
+  if (error) console.error('Blood test save error:', error);
+}
+
+export async function deleteBloodTest(id) {
+  const { error } = await supabase.from('blood_tests').delete().eq('id', id);
+  if (error) console.error('Blood test delete error:', error);
+}
+
+// Weight log
+export async function getWeightLog() {
+  const uid = getUserId();
+  const { data } = await supabase
+    .from('weight_log')
+    .select('*')
+    .eq('user_id', uid)
+    .order('date', { ascending: true });
+  return data || [];
+}
+
+export async function saveWeight(date, weight) {
+  const uid = getUserId();
+  const { error } = await supabase
+    .from('weight_log')
+    .upsert({ user_id: uid, date, weight }, { onConflict: 'user_id,date' });
+  if (error) console.error('Weight save error:', error);
+}
+
+export async function deleteWeight(id) {
+  const { error } = await supabase.from('weight_log').delete().eq('id', id);
+  if (error) console.error('Weight delete error:', error);
+}
