@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getDayData, saveDayData, getAllData, getBloodTests, saveBloodTest, deleteBloodTest, getWeightLog, saveWeight, deleteWeight } from './supabase';
+import { getDayData, saveDayData, getAllData, getBloodTests, saveBloodTest, deleteBloodTest, getWeightLog, saveWeight, deleteWeight, signInWithGoogle, signOut, getSession, onAuthChange } from './supabase';
 
 const ACTIVITY_LEVELS = {
   rest:  { label: '🧘 Обычный день', cal: 2000, prot: 130, fat: 65, carb: 220, fiber: 30, sfat: 20 },
@@ -29,6 +29,8 @@ const LC = {
 
 export default function App() {
   const [dark, setDark] = useState(() => localStorage.getItem('diary_dark') === '1');
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState('diary');
   const [date, setDate] = useState(todayStr());
   const [dayData, setDayData] = useState({ meals: [], water: 0, ai_rec: null, activity: 'rest' });
@@ -50,28 +52,33 @@ export default function App() {
 
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
-    const data = await getDayData(d);
+    const s = await getSession();
+    const data = await getDayData(d, s);
     setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest' });
     setSyncing(false);
   }, []);
 
   const loadAll = useCallback(async () => {
-    const rows = await getAllData(); setAllData(rows);
+    const s = await getSession();
+    const rows = await getAllData(s); setAllData(rows);
   }, []);
 
   useEffect(() => { loadDay(date); }, [date, loadDay]);
   useEffect(() => { if (tab === 'charts') loadAll(); }, [tab, loadAll]);
   useEffect(() => {
     if (tab === 'health') {
-      getBloodTests().then(setBloodTests);
-      getWeightLog().then(setWeightLog);
+      getSession().then(s => {
+        getBloodTests(s).then(setBloodTests);
+        getWeightLog(s).then(setWeightLog);
+      });
     }
   }, [tab]);
 
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
-    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' });
+    const s = await getSession();
+    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' }, s);
   }
 
   const totals = (dayData.meals || []).reduce((a, m) => { for (const k in a) a[k] += parseFloat(m[k]) || 0; return a; }, { cal:0, prot:0, fat:0, carb:0, fiber:0, sfat:0 });
@@ -231,6 +238,25 @@ export default function App() {
   const card = {background:T.bg2,borderRadius:16,padding:'18px 16px',boxShadow:T.shadow,marginBottom:14};
   const secTitle = {fontFamily:'sans-serif',fontSize:11,letterSpacing:'0.12em',textTransform:'uppercase',color:T.text2,marginBottom:12,display:'flex',alignItems:'center',gap:8};
 
+  if (authLoading) return (
+    <div style={{background:'#f5f0e8',minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div style={{fontFamily:'sans-serif',fontSize:13,color:'#9a8060',letterSpacing:'0.1em'}}>Загрузка...</div>
+    </div>
+  );
+
+  if (!session) return (
+    <div style={{background:T.bg,minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:32,fontFamily:'Georgia,serif'}}>
+      <div style={{fontSize:48,marginBottom:16}}>🥗</div>
+      <div style={{fontSize:22,color:T.text,fontStyle:'italic',marginBottom:8}}>Дневник питания</div>
+      <div style={{fontFamily:'sans-serif',fontSize:12,color:T.text2,letterSpacing:'0.1em',textTransform:'uppercase',marginBottom:48}}>Твоё здоровье · каждый день</div>
+      <button onClick={signInWithGoogle} style={{display:'flex',alignItems:'center',gap:12,background:'#fff',border:'1px solid #e0d0b8',borderRadius:14,padding:'14px 28px',fontFamily:'sans-serif',fontSize:14,color:'#2a1f14',cursor:'pointer',boxShadow:'0 2px 16px rgba(42,31,20,0.1)',fontWeight:500}}>
+        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Войти через Google
+      </button>
+      <div style={{fontFamily:'sans-serif',fontSize:11,color:T.text3,marginTop:24,textAlign:'center',lineHeight:1.8}}>Данные синхронизируются между<br/>всеми твоими устройствами</div>
+    </div>
+  );
+
   return (
     <div style={{background:T.bg,minHeight:'100vh',fontFamily:'Georgia,serif',color:T.text,transition:'background 0.3s',paddingBottom:80}}>
       <style>{`
@@ -254,6 +280,10 @@ export default function App() {
           <button onClick={()=>{const nd=!dark;setDark(nd);localStorage.setItem('diary_dark',nd?'1':'0');}} style={{background:'none',border:`1px solid ${T.border2}`,color:T.text2,width:34,height:34,borderRadius:10,fontSize:16}}>
             {dark?'☀️':'🌙'}
           </button>
+          {session?.user?.user_metadata?.avatar_url
+            ? <img src={session.user.user_metadata.avatar_url} onClick={signOut} style={{width:32,height:32,borderRadius:'50%',cursor:'pointer',border:`2px solid ${T.border2}`}} title="Выйти"/>
+            : <button onClick={signOut} style={{background:'none',border:`1px solid ${T.border2}`,color:T.text2,padding:'4px 10px',fontFamily:'sans-serif',fontSize:10,borderRadius:8,cursor:'pointer'}}>Выйти</button>
+          }
         </div>
       </div>
 
@@ -561,8 +591,9 @@ export default function App() {
                 </div>
                 <button onClick={async()=>{
                   if(!newTest.total_chol&&!newTest.ldl)return;
-                  await saveBloodTest({date:newTest.date,total_chol:newTest.total_chol?parseFloat(newTest.total_chol):null,ldl:newTest.ldl?parseFloat(newTest.ldl):null,hdl:newTest.hdl?parseFloat(newTest.hdl):null,triglycerides:newTest.triglycerides?parseFloat(newTest.triglycerides):null,notes:newTest.notes});
-                  const bt=await getBloodTests();setBloodTests(bt);
+                  const s = await getSession();
+                  await saveBloodTest({date:newTest.date,total_chol:newTest.total_chol?parseFloat(newTest.total_chol):null,ldl:newTest.ldl?parseFloat(newTest.ldl):null,hdl:newTest.hdl?parseFloat(newTest.hdl):null,triglycerides:newTest.triglycerides?parseFloat(newTest.triglycerides):null,notes:newTest.notes}, s);
+                  const bt=await getBloodTests(s);setBloodTests(bt);
                   setNewTest({date:todayStr(),total_chol:'',ldl:'',hdl:'',triglycerides:'',notes:''});
                 }} style={{width:'100%',background:T.red,border:'none',color:'#fff',padding:'10px',fontFamily:'sans-serif',fontSize:12,letterSpacing:'0.08em',textTransform:'uppercase',borderRadius:10,fontWeight:600}}>Сохранить анализ</button>
               </div>
