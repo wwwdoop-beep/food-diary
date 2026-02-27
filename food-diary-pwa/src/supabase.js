@@ -5,8 +5,33 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Simple user id stored in localStorage (no auth needed)
-export function getUserId() {
+// Auth
+export async function signInWithGoogle() {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin }
+  });
+  if (error) console.error('Google sign in error:', error);
+}
+
+export async function signOut() {
+  await supabase.auth.signOut();
+}
+
+export async function getSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+
+export function onAuthChange(callback) {
+  return supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session);
+  });
+}
+
+export function getUserId(session) {
+  if (session?.user?.id) return session.user.id;
+  // fallback to localStorage for backward compat
   let uid = localStorage.getItem('diary_uid');
   if (!uid) {
     uid = 'user_' + Math.random().toString(36).substr(2, 12);
@@ -15,8 +40,8 @@ export function getUserId() {
   return uid;
 }
 
-export async function getDayData(date) {
-  const uid = getUserId();
+export async function getDayData(date, session) {
+  const uid = getUserId(session);
   const { data } = await supabase
     .from('diary_data')
     .select('*')
@@ -26,8 +51,8 @@ export async function getDayData(date) {
   return data || { meals: [], water: 0, mood: null, mood_note: '', ai_rec: null };
 }
 
-export async function saveDayData(date, fields) {
-  const uid = getUserId();
+export async function saveDayData(date, fields, session) {
+  const uid = getUserId(session);
   const { error } = await supabase
     .from('diary_data')
     .upsert({ user_id: uid, date, updated_at: new Date().toISOString(), ...fields },
@@ -35,8 +60,8 @@ export async function saveDayData(date, fields) {
   if (error) console.error('Supabase save error:', error);
 }
 
-export async function getAllData() {
-  const uid = getUserId();
+export async function getAllData(session) {
+  const uid = getUserId(session);
   const { data } = await supabase
     .from('diary_data')
     .select('*')
@@ -47,8 +72,8 @@ export async function getAllData() {
 }
 
 // Blood tests
-export async function getBloodTests() {
-  const uid = getUserId();
+export async function getBloodTests(session) {
+  const uid = getUserId(session);
   const { data } = await supabase
     .from('blood_tests')
     .select('*')
@@ -57,8 +82,8 @@ export async function getBloodTests() {
   return data || [];
 }
 
-export async function saveBloodTest(record) {
-  const uid = getUserId();
+export async function saveBloodTest(record, session) {
+  const uid = getUserId(session);
   const { error } = await supabase
     .from('blood_tests')
     .insert({ user_id: uid, ...record });
@@ -71,8 +96,8 @@ export async function deleteBloodTest(id) {
 }
 
 // Weight log
-export async function getWeightLog() {
-  const uid = getUserId();
+export async function getWeightLog(session) {
+  const uid = getUserId(session);
   const { data } = await supabase
     .from('weight_log')
     .select('*')
@@ -81,8 +106,8 @@ export async function getWeightLog() {
   return data || [];
 }
 
-export async function saveWeight(date, weight) {
-  const uid = getUserId();
+export async function saveWeight(date, weight, session) {
+  const uid = getUserId(session);
   const { error } = await supabase
     .from('weight_log')
     .upsert({ user_id: uid, date, weight }, { onConflict: 'user_id,date' });
