@@ -63,6 +63,18 @@ export default function App() {
     const rows = await getAllData(s); setAllData(rows);
   }, []);
 
+  useEffect(() => {
+    getSession().then(s => {
+      setSession(s);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = onAuthChange(s => {
+      setSession(s);
+      setAuthLoading(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   useEffect(() => { loadDay(date); }, [date, loadDay]);
   useEffect(() => { if (tab === 'charts') loadAll(); }, [tab, loadAll]);
   useEffect(() => {
