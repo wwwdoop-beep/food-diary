@@ -52,16 +52,16 @@ export default function App() {
 
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
-    const s = await getSession();
+    const s = await getSession(); // fresh session for initial load
     const data = await getDayData(d, s);
     setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest' });
     setSyncing(false);
   }, []);
 
   const loadAll = useCallback(async () => {
-    const s = await getSession();
+    const s = session || await getSession();
     const rows = await getAllData(s); setAllData(rows);
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     getSession().then(s => {
@@ -79,18 +79,15 @@ export default function App() {
   useEffect(() => { if (tab === 'charts') loadAll(); }, [tab, loadAll]);
   useEffect(() => {
     if (tab === 'health') {
-      getSession().then(s => {
-        getBloodTests(s).then(setBloodTests);
-        getWeightLog(s).then(setWeightLog);
-      });
+      getBloodTests(session).then(setBloodTests);
+      getWeightLog(session).then(setWeightLog);
     }
   }, [tab]);
 
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
-    const s = await getSession();
-    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' }, s);
+    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' }, session);
   }
 
   const totals = (dayData.meals || []).reduce((a, m) => { for (const k in a) a[k] += parseFloat(m[k]) || 0; return a; }, { cal:0, prot:0, fat:0, carb:0, fiber:0, sfat:0 });
@@ -173,13 +170,13 @@ export default function App() {
       const match = text.match(/\{[\s\S]*\}/); if (match) text = match[0];
       const rec = JSON.parse(text);
       // Сохраняем только ai_rec, не трогая остальные поля
-      const current = await getDayData(date);
+      const current = await getDayData(date, session);
       await saveDayData(date, {
         meals: current.meals || meals,
         water: current.water || 0,
         ai_rec: rec,
         activity: current.activity || 'rest'
-      });
+      }, session);
       setDayData(prev => ({ ...prev, ai_rec: rec }));
     } catch(e) { console.error(e); }
     setAiLoading(false);
@@ -214,11 +211,23 @@ export default function App() {
   function getChartValues(k) {
     const NORMS_chart = getNorms(dayData.activity);
     return chartDates.map(p=>{
-      const total = p.days.reduce((sum,d)=>{
+      if (k === 'water') {
+        const activeDays = p.days.filter(d => allData.find(r => r.date === d));
+        if (activeDays.length === 0) return 0;
+        const total = activeDays.reduce((sum,d) => {
+          const row = allData.find(r => r.date === d);
+          return sum + (row?.water || 0);
+        }, 0);
+        const avg = total / activeDays.length;
+        return Math.round((avg / WATER_GOAL) * 100);
+      }
+      const activeDays = p.days.filter(d=>allData.find(r=>r.date===d));
+      if (activeDays.length === 0) return 0;
+      const total = activeDays.reduce((sum,d)=>{
         const t=getDayTotals(d); return sum+(t[k]||0);
       },0);
-      const avg = total / p.days.filter(d=>allData.find(r=>r.date===d)).length || 0;
-      const norm = k==='water' ? WATER_GOAL : NORMS_chart[k];
+      const avg = total / activeDays.length;
+      const norm = NORMS_chart[k];
       return norm>0 ? Math.round((avg/norm)*100) : 0;
     });
   }
@@ -461,7 +470,7 @@ export default function App() {
                 <button key={v} onClick={()=>setChartRange(v)} style={{background:chartRange===v?T.accent:'transparent',border:`1px solid ${chartRange===v?T.accent:T.border2}`,color:chartRange===v?'#fff':T.text2,padding:'6px 14px',fontFamily:'sans-serif',fontSize:11,borderRadius:20,transition:'all 0.2s',letterSpacing:'0.06em'}}>{l}</button>
               ))}
             </div>
-            {[{title:'Калории (% от нормы)',k:'cal',color:T.cal,warn:false},{title:'Насыщенные жиры (% от макс.)',k:'sfat',color:T.sfat,warn:true},{title:'Белки (% от нормы)',k:'prot',color:T.prot,warn:false},{title:'Клетчатка (% от цели)',k:'fiber',color:T.fiber,warn:false}].map(({title,k,color,warn})=>(
+            {[{title:'Калории (% от нормы)',k:'cal',color:T.cal,warn:false},{title:'Белки (% от нормы)',k:'prot',color:T.prot,warn:false},{title:'Жиры (% от нормы)',k:'fat',color:T.fat,warn:false},{title:'Насыщенные жиры (% от макс.)',k:'sfat',color:T.sfat,warn:true},{title:'Клетчатка (% от цели)',k:'fiber',color:T.fiber,warn:false}].map(({title,k,color,warn})=>(
               <div key={k} style={card}>
                 <div style={secTitle}>{title}</div>
                 <PctBar pcts={getChartValues(k)} color={color} warnOver={warn} labels={chartLabels}/>
@@ -603,9 +612,8 @@ export default function App() {
                 </div>
                 <button onClick={async()=>{
                   if(!newTest.total_chol&&!newTest.ldl)return;
-                  const s = await getSession();
                   await saveBloodTest({date:newTest.date,total_chol:newTest.total_chol?parseFloat(newTest.total_chol):null,ldl:newTest.ldl?parseFloat(newTest.ldl):null,hdl:newTest.hdl?parseFloat(newTest.hdl):null,triglycerides:newTest.triglycerides?parseFloat(newTest.triglycerides):null,notes:newTest.notes}, s);
-                  const bt=await getBloodTests(s);setBloodTests(bt);
+                  const bt=await getBloodTests(session);setBloodTests(bt);
                   setNewTest({date:todayStr(),total_chol:'',ldl:'',hdl:'',triglycerides:'',notes:''});
                 }} style={{width:'100%',background:T.red,border:'none',color:'#fff',padding:'10px',fontFamily:'sans-serif',fontSize:12,letterSpacing:'0.08em',textTransform:'uppercase',borderRadius:10,fontWeight:600}}>Сохранить анализ</button>
               </div>
