@@ -7,7 +7,6 @@ const ACTIVITY_LEVELS = {
   sport: { label: '🎾 Спорт',        cal: 2500, prot: 155, fat: 80, carb: 290, fiber: 30, sfat: 20 },
 };
 function getNorms(activity) { return ACTIVITY_LEVELS[activity] || ACTIVITY_LEVELS.rest; }
-const WATER_GOAL = 8;
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 function addDays(s, d) { const dt = new Date(s + 'T12:00:00'); dt.setDate(dt.getDate() + d); return dt.toISOString().split('T')[0]; }
 function formatDateRu(s) { return new Date(s + 'T12:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }); }
@@ -46,7 +45,11 @@ export default function App() {
   const [weightLog, setWeightLog] = useState([]);
   const [newTest, setNewTest] = useState({ date: todayStr(), total_chol:'', ldl:'', hdl:'', triglycerides:'', notes:'' });
   const [newWeight, setNewWeight] = useState({ date: todayStr(), weight:'' });
-  const [healthTab, setHealthTab] = useState('weight'); // 'weight' | 'blood' // '7d' | '4w'
+  const [healthTab, setHealthTab] = useState('weight');
+  const [editMeal, setEditMeal] = useState(null); // {index, name, cal, prot, fat, carb, fiber, sfat}
+  const [favorites, setFavorites] = useState(() => { try { return JSON.parse(localStorage.getItem('diary_favs')||'[]'); } catch { return []; } });
+  const [showFavs, setShowFavs] = useState(false);
+  const [cheatDay, setCheatDay] = useState(false);
   const fileRef = useRef();
   const T = dark ? LC.dark : LC.light;
 
@@ -54,7 +57,8 @@ export default function App() {
     setSyncing(true);
     const s = await getSession(); // fresh session for initial load
     const data = await getDayData(d, s);
-    setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest' });
+    setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest', cheatDay: data.cheat_day || false });
+    setCheatDay(data.cheat_day || false);
     setSyncing(false);
   }, []);
 
@@ -87,7 +91,7 @@ export default function App() {
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
-    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest' }, session);
+    await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest', cheat_day: updated.cheatDay || false }, session);
   }
 
   const totals = (dayData.meals || []).reduce((a, m) => { for (const k in a) a[k] += parseFloat(m[k]) || 0; return a; }, { cal:0, prot:0, fat:0, carb:0, fiber:0, sfat:0 });
@@ -187,6 +191,48 @@ export default function App() {
     await updateDay({ meals });
   }
 
+  async function saveEditMeal() {
+    if (!editMeal) return;
+    const meals = [...(dayData.meals||[])];
+    meals[editMeal.index] = { ...meals[editMeal.index], name: editMeal.name, cal: +editMeal.cal, prot: +editMeal.prot, fat: +editMeal.fat, carb: +editMeal.carb, fiber: +editMeal.fiber, sfat: +editMeal.sfat };
+    await updateDay({ meals });
+    setEditMeal(null);
+  }
+
+  function toggleFavorite(meal) {
+    const key = meal.name.trim().toLowerCase();
+    const exists = favorites.find(f => f.name.trim().toLowerCase() === key);
+    let newFavs;
+    if (exists) {
+      newFavs = favorites.filter(f => f.name.trim().toLowerCase() !== key);
+    } else {
+      newFavs = [...favorites, { name: meal.name, cal: meal.cal, prot: meal.prot, fat: meal.fat, carb: meal.carb, fiber: meal.fiber, sfat: meal.sfat }];
+    }
+    setFavorites(newFavs);
+    localStorage.setItem('diary_favs', JSON.stringify(newFavs));
+  }
+
+  async function addFavorite(fav) {
+    const now = new Date().toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit' });
+    const meal = { ...fav, time: now, hasPhoto: false };
+    const updatedMeals = [...(dayData.meals||[]), meal];
+    await updateDay({ meals: updatedMeals });
+    setShowFavs(false);
+    setStatusMsg(`✓ ${fav.name} — ${fav.cal} ккал`);
+    getAiRec(updatedMeals);
+  }
+
+  function getTip() {
+    const NORMS = getNorms(dayData.activity);
+    const rem = { cal: NORMS.cal - totals.cal, prot: NORMS.prot - totals.prot, fiber: NORMS.fiber - totals.fiber, sfat: NORMS.sfat - totals.sfat };
+    if (totals.sfat > NORMS.sfat) return { icon: '⚠️', text: 'Насыщенные жиры превышены — избегай сыров и жирного мяса до конца дня', color: '#b04040' };
+    if (rem.prot > 50) return { icon: '🥩', text: `Нехватает ${Math.round(rem.prot)}г белка — добавь тунец, курицу или греческий йогурт`, color: '#5a8a4a' };
+    if (rem.fiber > 15) return { icon: '🍎', text: `Нехватает клетчатки — съешь яблоко или горсть нута`, color: '#4a7a3a' };
+    if (rem.cal > 600) return { icon: '🍽️', text: `Осталось ${Math.round(rem.cal)} ккал — есть место для полноценного приёма`, color: '#c17f3e' };
+    if (rem.cal < -200) return { icon: '✋', text: 'Калории превышены — лёгкий ужин без углеводов', color: '#b04040' };
+    return { icon: '✅', text: 'День идёт хорошо — продолжай в том же духе!', color: '#5a8a4a' };
+  }
+
   // Charts data
   const last7 = Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));return d.toISOString().split('T')[0];});
   function getDayTotals(dateStr) {
@@ -219,7 +265,7 @@ export default function App() {
           return sum + (row?.water || 0);
         }, 0);
         const avg = total / activeDays.length;
-        return Math.round((avg / WATER_GOAL) * 100);
+        return Math.round((avg / 8) * 100);
       }
       const activeDays = p.days.filter(d=>allData.find(r=>r.date===d));
       if (activeDays.length === 0) return 0;
@@ -319,6 +365,9 @@ export default function App() {
             <div style={{flex:1,textAlign:'center',fontFamily:'sans-serif',fontSize:14,color:T.text,fontWeight:500}}>{formatDateRu(date)}</div>
             <button onClick={()=>setDate(d=>addDays(d,1))} style={{background:T.bg2,border:`1px solid ${T.border2}`,color:T.text2,width:36,height:36,borderRadius:10,fontSize:18,boxShadow:T.shadow}}>›</button>
           </div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:date!==todayStr()?8:0}}>
+            {cheatDay&&<span style={{fontFamily:'sans-serif',fontSize:11,color:'#b04040',background:'#b0404015',padding:'2px 10px',borderRadius:20}}>🍕 чит-дей</span>}
+          </div>
           {date!==todayStr()&&<div style={{textAlign:'center',marginBottom:12}}>
             <button onClick={()=>setDate(todayStr())} style={{background:'none',border:`1px solid ${T.border2}`,color:T.text2,padding:'4px 14px',fontFamily:'sans-serif',fontSize:11,borderRadius:20,letterSpacing:'0.06em'}}>← Сегодня</button>
           </div>}
@@ -338,23 +387,8 @@ export default function App() {
             })}
           </div>
 
-          {/* Water + Activity */}
+          {/* Activity + Cheat Day */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
-            <div style={card}>
-              <div style={secTitle}><span>💧</span>Вода</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:8}}>
-                {Array.from({length:WATER_GOAL}).map((_,i)=>(
-                  <button key={i} onClick={()=>updateDay({water:i<dayData.water?i:i+1})} style={{background:'none',border:'none',fontSize:18,opacity:i<dayData.water?1:0.2,padding:'2px',transition:'opacity 0.15s'}}>🥤</button>
-                ))}
-              </div>
-              <div style={{height:4,background:T.border,borderRadius:2,marginBottom:6}}>
-                <div style={{height:'100%',width:Math.min(100,(dayData.water/WATER_GOAL)*100)+'%',background:T.blue,borderRadius:2,transition:'width 0.4s'}}/>
-              </div>
-              <div style={{display:'flex',gap:6}}>
-                <button onClick={()=>updateDay({water:Math.max(0,dayData.water-1)})} style={{flex:1,background:T.bg3,border:`1px solid ${T.border}`,color:T.text2,padding:'6px',fontFamily:'sans-serif',fontSize:13,borderRadius:8}}>−</button>
-                <button onClick={()=>updateDay({water:Math.min(12,dayData.water+1)})} style={{flex:2,background:T.blue+'22',border:`1px solid ${T.blue}`,color:T.blue,padding:'6px',fontFamily:'sans-serif',fontSize:12,borderRadius:8,fontWeight:600}}>+ стакан</button>
-              </div>
-            </div>
             <div style={card}>
               <div style={secTitle}><span>🏃</span>Активность</div>
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
@@ -363,35 +397,30 @@ export default function App() {
                 ))}
               </div>
               <div style={{fontFamily:'sans-serif',fontSize:10,color:T.text3,marginTop:8,textAlign:'center'}}>
-                норма: {getNorms(dayData.activity).cal} ккал / {getNorms(dayData.activity).prot}г белка
+                {getNorms(dayData.activity).cal} ккал / {getNorms(dayData.activity).prot}г белка
               </div>
+            </div>
+            <div style={card}>
+              <div style={secTitle}><span>🍕</span>Чит-дей</div>
+              <div style={{fontFamily:'sans-serif',fontSize:11,color:T.text2,marginBottom:12,lineHeight:1.6}}>Отметь если сегодня чит-дей — данные сохранятся, но в статистике будут помечены</div>
+              <button onClick={async()=>{const v=!cheatDay;setCheatDay(v);await updateDay({cheatDay:v});}} style={{width:'100%',padding:'12px',borderRadius:12,border:`2px solid ${cheatDay?'#b04040':T.border}`,background:cheatDay?'#b0404018':'transparent',color:cheatDay?'#b04040':T.text2,fontFamily:'sans-serif',fontSize:13,fontWeight:600,transition:'all 0.2s'}}>
+                {cheatDay ? '🍕 Чит-дей активен' : '○ Обычный день'}
+              </button>
+              {cheatDay&&<div style={{fontFamily:'sans-serif',fontSize:10,color:'#b04040',marginTop:8,textAlign:'center'}}>записи сохраняются как обычно</div>}
             </div>
           </div>
 
-          {/* AI Rec */}
-          {(dayData.ai_rec||aiLoading)&&(
-            <div style={{...card,borderLeft:`4px solid ${T.accent}`,animation:'fadeIn 0.4s ease'}}>
-              <div style={secTitle}><span>🤖</span>Рекомендация ИИ</div>
-              {aiLoading?(
-                <div style={{display:'flex',alignItems:'center',gap:8,color:T.text2,fontFamily:'sans-serif',fontSize:13}}>
-                  <div style={{width:7,height:7,borderRadius:'50%',background:T.accent,animation:'pulse 1.2s infinite'}}/>
-                  Анализирую рацион...
-                </div>
-              ):(
-                <>
-                  {dayData.ai_rec?.tip&&<div style={{fontFamily:'sans-serif',fontSize:12,color:T.accent,fontWeight:600,marginBottom:12,padding:'8px 12px',background:T.accent+'15',borderRadius:8}}>💡 {dayData.ai_rec.tip}</div>}
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                    <div>
-                      <div style={{fontFamily:'sans-serif',fontSize:10,color:T.green,fontWeight:600,letterSpacing:'0.08em',marginBottom:6}}>✓ ДОБАВИТЬ</div>
-                      {(dayData.ai_rec?.add||[]).map((t,i)=><div key={i} style={{fontSize:12,color:T.text,padding:'4px 0',borderBottom:`1px solid ${T.border}`,lineHeight:1.4,fontFamily:'sans-serif'}}><span style={{color:T.green}}>→ </span>{t}</div>)}
-                    </div>
-                    <div>
-                      <div style={{fontFamily:'sans-serif',fontSize:10,color:T.red,fontWeight:600,letterSpacing:'0.08em',marginBottom:6}}>✗ ИЗБЕГАТЬ</div>
-                      {(dayData.ai_rec?.avoid||[]).map((t,i)=><div key={i} style={{fontSize:12,color:T.text,padding:'4px 0',borderBottom:`1px solid ${T.border}`,lineHeight:1.4,fontFamily:'sans-serif'}}><span style={{color:T.red}}>→ </span>{t}</div>)}
-                    </div>
-                  </div>
-                </>
-              )}
+          {/* Tip of the day */}
+          {totals.cal > 0 && !aiLoading && (()=>{const tip=getTip();return(
+            <div style={{...card,borderLeft:`4px solid ${tip.color}`,padding:'12px 16px',marginBottom:14}}>
+              <div style={{fontFamily:'sans-serif',fontSize:13,color:tip.color,fontWeight:600}}>{tip.icon} {tip.text}</div>
+            </div>
+          );})()}
+          {aiLoading&&(
+            <div style={{...card,padding:'12px 16px',marginBottom:14}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,color:T.text2,fontFamily:'sans-serif',fontSize:12}}>
+                <div style={{width:6,height:6,borderRadius:'50%',background:T.accent,animation:'pulse 1.2s infinite'}}/>Анализирую рацион...
+              </div>
             </div>
           )}
 
@@ -429,6 +458,26 @@ export default function App() {
             </div>
           )}
 
+          {/* Favorites quick add */}
+          {favorites.length>0&&(
+            <div style={{marginBottom:14}}>
+              <button onClick={()=>setShowFavs(v=>!v)} style={{width:'100%',background:T.bg2,border:`1px solid ${T.border2}`,color:T.text2,padding:'10px 16px',fontFamily:'sans-serif',fontSize:12,borderRadius:12,textAlign:'left',display:'flex',justifyContent:'space-between',alignItems:'center',boxShadow:T.shadow}}>
+                <span>⭐ Избранное ({favorites.length})</span><span>{showFavs?'▲':'▼'}</span>
+              </button>
+              {showFavs&&<div style={{background:T.bg2,borderRadius:12,marginTop:4,overflow:'hidden',boxShadow:T.shadow}}>
+                {favorites.map((fav,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',padding:'10px 14px',borderBottom:`1px solid ${T.border}`}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontFamily:'Georgia,serif',fontSize:13,color:T.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{fav.name}</div>
+                      <div style={{fontFamily:'sans-serif',fontSize:10,color:T.text3,marginTop:2}}>{fav.cal} ккал · {fav.prot}г б</div>
+                    </div>
+                    <button onClick={()=>addFavorite(fav)} style={{background:T.accent,border:'none',color:'#fff',padding:'6px 12px',fontFamily:'sans-serif',fontSize:11,borderRadius:8,fontWeight:600,flexShrink:0}}>+ добавить</button>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          )}
+
           {/* Meals */}
           <div style={card}>
             <div style={secTitle}><span style={{width:6,height:6,background:T.green,borderRadius:'50%',display:'inline-block'}}/>Приёмы пищи</div>
@@ -440,25 +489,49 @@ export default function App() {
             ):(
               <div>
                 {(dayData.meals||[]).map((m,i)=>(
-                  <div key={i} style={{padding:'10px 0',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:'flex',alignItems:'center',gap:6}}>
-                        {m.hasPhoto&&<span style={{fontSize:12}}>📷</span>}
-                        <div style={{fontFamily:'Georgia,serif',fontSize:14,color:T.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.name}</div>
-                      </div>
-                      {m.time&&<div style={{fontFamily:'sans-serif',fontSize:10,color:T.text3,marginTop:2}}>{m.time}</div>}
-                      <div style={{display:'flex',gap:6,marginTop:4,flexWrap:'wrap'}}>
-                        {[['cal',T.cal],['prot',T.prot],['fat',T.fat],['carb',T.carb],['fiber',T.fiber],['sfat',T.sfat]].map(([k,c])=>(
-                          <span key={k} style={{fontFamily:'sans-serif',fontSize:10,color:c,fontWeight:600,background:c+'15',padding:'1px 6px',borderRadius:4}}>{Math.round(m[k])}</span>
-                        ))}
-                      </div>
+                  <div key={i} style={{padding:'10px 0',borderBottom:`1px solid ${T.border}`}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+                      {m.hasPhoto&&<span style={{fontSize:11}}>📷</span>}
+                      <div style={{flex:1,fontFamily:'Georgia,serif',fontSize:14,color:T.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.name}</div>
+                      <button onClick={()=>toggleFavorite(m)} style={{background:'none',border:'none',fontSize:14,padding:'2px',color:favorites.find(f=>f.name.trim().toLowerCase()===m.name.trim().toLowerCase())?'#e0a020':T.border2,flexShrink:0}}>★</button>
+                      <button onClick={()=>setEditMeal({index:i,...m})} style={{background:'none',border:'none',fontSize:13,padding:'2px 4px',color:T.text3,flexShrink:0}}>✏️</button>
+                      <button onClick={()=>deleteMeal(i)} style={{background:'none',border:'none',color:T.border2,fontSize:18,lineHeight:1,padding:'2px',flexShrink:0}}>×</button>
                     </div>
-                    <button onClick={()=>deleteMeal(i)} style={{background:'none',border:'none',color:T.border2,fontSize:20,lineHeight:1,padding:'4px',flexShrink:0}}>×</button>
+                    {m.time&&<div style={{fontFamily:'sans-serif',fontSize:10,color:T.text3,marginBottom:3}}>{m.time}</div>}
+                    <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                      {[['cal',T.cal],['prot',T.prot],['fat',T.fat],['carb',T.carb],['fiber',T.fiber],['sfat',T.sfat]].map(([k,c])=>(
+                        <span key={k} style={{fontFamily:'sans-serif',fontSize:10,color:c,fontWeight:600,background:c+'15',padding:'1px 6px',borderRadius:4}}>{Math.round(m[k])}</span>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* Edit meal modal */}
+          {editMeal&&(
+            <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:200,display:'flex',alignItems:'flex-end'}} onClick={()=>setEditMeal(null)}>
+              <div style={{background:T.bg2,borderRadius:'20px 20px 0 0',padding:20,width:'100%',maxWidth:600,margin:'0 auto',boxSizing:'border-box'}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontFamily:'sans-serif',fontSize:12,fontWeight:600,color:T.text2,marginBottom:12,letterSpacing:'0.1em',textTransform:'uppercase'}}>Редактировать блюдо</div>
+                <input value={editMeal.name} onChange={e=>setEditMeal(p=>({...p,name:e.target.value}))}
+                  style={{width:'100%',background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,padding:'8px 10px',fontFamily:'Georgia,serif',fontSize:14,color:T.text,boxSizing:'border-box',marginBottom:10}}/>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:14}}>
+                  {[['cal','Ккал',T.cal],['prot','Белки',T.prot],['fat','Жиры',T.fat],['carb','Углев.',T.carb],['fiber','Клетч.',T.fiber],['sfat','Нас.ж.',T.sfat]].map(([k,l,c])=>(
+                    <div key={k}>
+                      <div style={{fontFamily:'sans-serif',fontSize:9,color:c,marginBottom:3,letterSpacing:'0.08em',textTransform:'uppercase'}}>{l}</div>
+                      <input type="number" value={editMeal[k]} onChange={e=>setEditMeal(p=>({...p,[k]:e.target.value}))}
+                        style={{width:'100%',background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,padding:'6px 8px',fontFamily:'sans-serif',fontSize:13,color:T.text,boxSizing:'border-box'}}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <button onClick={()=>setEditMeal(null)} style={{flex:1,background:T.bg3,border:`1px solid ${T.border}`,color:T.text2,padding:'10px',fontFamily:'sans-serif',fontSize:12,borderRadius:10}}>Отмена</button>
+                  <button onClick={saveEditMeal} style={{flex:2,background:T.accent,border:'none',color:'#fff',padding:'10px',fontFamily:'sans-serif',fontSize:12,borderRadius:10,fontWeight:600}}>Сохранить</button>
+                </div>
+              </div>
+            </div>
+          )}
         </>}
 
         {/* CHARTS */}
@@ -476,10 +549,7 @@ export default function App() {
                 <PctBar pcts={getChartValues(k)} color={color} warnOver={warn} labels={chartLabels}/>
               </div>
             ))}
-            <div style={card}>
-              <div style={secTitle}><span>💧</span>Вода (% от цели {WATER_GOAL} стак.)</div>
-              <PctBar pcts={getChartValues('water')} color={T.blue} warnOver={false} labels={chartLabels}/>
-            </div>
+
           </div>
         )}
 
