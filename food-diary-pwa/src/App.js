@@ -55,7 +55,7 @@ export default function App() {
 
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
-    const s = await getSession(); // fresh session for initial load
+    const s = await getSession();
     const data = await getDayData(d, s);
     setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest', cheatDay: data.cheat_day || false });
     setCheatDay(data.cheat_day || false);
@@ -79,7 +79,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { loadDay(date); }, [date, loadDay]);
+  useEffect(() => { if (!authLoading) loadDay(date); }, [date, loadDay, authLoading, session]);
   useEffect(() => { if (tab === 'charts') loadAll(); }, [tab, loadAll]);
   useEffect(() => {
     if (tab === 'health') {
