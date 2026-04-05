@@ -55,11 +55,8 @@ export default function App() {
 
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
-    const s = await getSession();
-    const uid = s?.user?.id || localStorage.getItem('diary_uid') || 'no-id';
-    console.log('[LOAD] date:', d, 'uid:', uid, 'has_session:', !!s);
+    const s = await getSession(); // fresh session for initial load
     const data = await getDayData(d, s);
-    console.log('[LOAD] meals found:', (data.meals||[]).length);
     setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest', cheatDay: data.cheat_day || false });
     setCheatDay(data.cheat_day || false);
     setSyncing(false);
@@ -82,7 +79,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { if (!authLoading) loadDay(date); }, [date, loadDay, authLoading, session]);
+  useEffect(() => { loadDay(date); }, [date, loadDay]);
   useEffect(() => { if (tab === 'charts') loadAll(); }, [tab, loadAll]);
   useEffect(() => {
     if (tab === 'health') {
@@ -94,8 +91,6 @@ export default function App() {
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
-    const uid = session?.user?.id || localStorage.getItem('diary_uid') || 'no-id';
-    console.log('[SAVE] date:', date, 'uid:', uid, 'session:', !!session, 'meals:', (updated.meals||[]).length);
     await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest', cheat_day: updated.cheatDay || false }, session);
   }
 
@@ -262,18 +257,19 @@ export default function App() {
   function getChartValues(k) {
     const NORMS_chart = getNorms(dayData.activity);
     return chartDates.map(p=>{
+      // Only count days that have actual meal records
+      const activeDays = p.days.filter(d => {
+        const row = allData.find(r => r.date === d);
+        return row && (row.meals||[]).length > 0;
+      });
+      if (activeDays.length === 0) return 0;
       if (k === 'water') {
-        const activeDays = p.days.filter(d => allData.find(r => r.date === d));
-        if (activeDays.length === 0) return 0;
         const total = activeDays.reduce((sum,d) => {
           const row = allData.find(r => r.date === d);
           return sum + (row?.water || 0);
         }, 0);
-        const avg = total / activeDays.length;
-        return Math.round((avg / 8) * 100);
+        return Math.round((total / activeDays.length / 8) * 100);
       }
-      const activeDays = p.days.filter(d=>allData.find(r=>r.date===d));
-      if (activeDays.length === 0) return 0;
       const total = activeDays.reduce((sum,d)=>{
         const t=getDayTotals(d); return sum+(t[k]||0);
       },0);
