@@ -250,7 +250,10 @@ export default function App() {
         return { label: start.toLocaleDateString('ru-RU',{day:'numeric',month:'short'}), days };
       });
     }
-    return last7.map(d=>({ label: new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'numeric'}), days:[d] }));
+    // 7d mode: only show days that have data
+    const allDays = last7.map(d=>({ label: new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'numeric'}), days:[d] }));
+    const withData = allDays.filter(p => allData.find(r => r.date === p.days[0] && (r.meals||[]).length > 0));
+    return withData.length > 0 ? withData : allDays;
   }
   const chartDates = getChartDates();
   const chartLabels = chartDates.map(p=>p.label);
