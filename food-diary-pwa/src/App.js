@@ -56,7 +56,10 @@ export default function App() {
   const loadDay = useCallback(async (d) => {
     setSyncing(true);
     const s = await getSession();
+    const uid = s?.user?.id || localStorage.getItem('diary_uid') || 'no-id';
+    console.log('[LOAD] date:', d, 'uid:', uid, 'has_session:', !!s);
     const data = await getDayData(d, s);
+    console.log('[LOAD] meals found:', (data.meals||[]).length);
     setDayData({ meals: data.meals || [], water: data.water || 0, ai_rec: data.ai_rec || null, activity: data.activity || 'rest', cheatDay: data.cheat_day || false });
     setCheatDay(data.cheat_day || false);
     setSyncing(false);
@@ -91,6 +94,8 @@ export default function App() {
   async function updateDay(fields) {
     const updated = { ...dayData, ...fields };
     setDayData(updated);
+    const uid = session?.user?.id || localStorage.getItem('diary_uid') || 'no-id';
+    console.log('[SAVE] date:', date, 'uid:', uid, 'session:', !!session, 'meals:', (updated.meals||[]).length);
     await saveDayData(date, { meals: updated.meals, water: updated.water, ai_rec: updated.ai_rec, activity: updated.activity || 'rest', cheat_day: updated.cheatDay || false }, session);
   }
 
@@ -250,10 +255,7 @@ export default function App() {
         return { label: start.toLocaleDateString('ru-RU',{day:'numeric',month:'short'}), days };
       });
     }
-    // 7d mode: only show days that have data
-    const allDays = last7.map(d=>({ label: new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'numeric'}), days:[d] }));
-    const withData = allDays.filter(p => allData.find(r => r.date === p.days[0] && (r.meals||[]).length > 0));
-    return withData.length > 0 ? withData : allDays;
+    return last7.map(d=>({ label: new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'numeric'}), days:[d] }));
   }
   const chartDates = getChartDates();
   const chartLabels = chartDates.map(p=>p.label);
